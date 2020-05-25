@@ -23,6 +23,7 @@ import org.kestra.task.serdes.json.JsonReader;
 import java.io.*;
 import java.net.URI;
 import java.util.HashMap;
+import java.util.Map;
 import java.util.Objects;
 import java.util.function.Consumer;
 import javax.inject.Inject;
@@ -128,6 +129,7 @@ public class AvroConverterTest {
             GenericData.Record record = avroConverter.fromMap(schema, map);
             GenericRecord serialized = Utils.test(schema, record);
 
+            new GenericData().validate(schema, serialized);
             assertThat(record, is(serialized));
             assertThat(serialized.get("fieldName"), is(expected));
         }
@@ -135,8 +137,42 @@ public class AvroConverterTest {
         public static void oneFieldFailed(Object v, Schema type) {
             AvroConverter avroConverter = AvroConverter.builder().build();
             Schema schema = oneFieldSchema(type);
+            Map<String, Object> data = new HashMap<>(); // Map instead of ImmutableMap to allow null values
+            data.put("fieldName", v);
+            assertThrows(AvroConverter.IllegalRowConvertion.class, () -> avroConverter.fromMap(schema, data));
+        }
 
-            assertThrows(AvroConverter.IllegalRowConvertion.class, () -> avroConverter.fromMap(schema, ImmutableMap.of("fieldName", v)));
+        static void testRecord(Schema type, Map<String, Object> v, Map<String, Object> expected) throws Exception {
+            try {
+                AvroConverter avroConverter = AvroConverter.builder().build();
+                Schema schema = oneFieldSchema(type);
+
+                HashMap<String, Object> mapV = new HashMap<>();
+                mapV.put("fieldName", v);
+
+                HashMap<String, Object> mapExpected = new HashMap<>();
+                mapExpected.put("fieldName", expected);
+
+                GenericData.Record recordV = avroConverter.fromMap(schema, mapV);
+                GenericRecord serializedV = AvroConverterTest.Utils.test(schema, recordV);
+                GenericData.Record recordExpected = avroConverter.fromMap(schema, mapExpected);
+                GenericRecord serializedExpected = AvroConverterTest.Utils.test(schema, recordExpected);
+                assertThat(recordV, is(serializedV));
+                assertThat(serializedV, is(serializedExpected));
+            } catch (AvroConverter.IllegalRowConvertion | AssertionError e) {
+                throw new Exception(e);
+            }
+        }
+
+        public static void testRecordOk(Schema type, Map<String, Object> v, Map<String, Object> expected) {
+            try {testRecord(type, v, expected);} catch (Exception e) { throw new RuntimeException(e);}
+        }
+
+        public static void testRecordKo(Schema type, Map<String, Object> v, Map<String, Object> expected) {
+            try {
+                testRecord(type, v, expected);
+            } catch (Exception ignored) {} // for debug purpose, can't debug lambda, BP here
+            assertThrows(Exception.class, () -> testRecord(type, v, expected));
         }
 
         public static Schema oneFieldSchema(Schema type) {

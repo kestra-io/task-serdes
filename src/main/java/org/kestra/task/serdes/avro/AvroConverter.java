@@ -14,12 +14,10 @@ import org.apache.commons.lang3.StringUtils;
 
 import java.math.BigDecimal;
 import java.math.MathContext;
-import java.math.RoundingMode;
 import java.nio.ByteBuffer;
 import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
-import java.util.regex.Pattern;
 
 @Builder
 public class AvroConverter {
@@ -27,7 +25,7 @@ public class AvroConverter {
     private List<String> trueValues = Arrays.asList("t", "true", "enabled", "1", "on", "yes");
 
     @Builder.Default
-    private List<String> falseValues = Arrays.asList("f", "false", "disabled", "0", "off", "no", "");
+    private List<String> falseValues = Arrays.asList("f", "false", "disabled", "0", "off", "no");
 
     @Builder.Default
     private List<String> nullValues = Arrays.asList(
@@ -58,6 +56,9 @@ public class AvroConverter {
     @Builder.Default
     private char decimalSeparator = '.';
 
+    @Builder.Default
+    private boolean missingDefaultIsNull = true;
+
     public static GenericData genericData() {
         GenericData genericData = new GenericData();
         genericData.addLogicalTypeConversion(new Conversions.UUIDConversion());
@@ -71,13 +72,33 @@ public class AvroConverter {
         return genericData;
     }
 
+    private static String trimExceptionMessage(Object data) throws JsonProcessingException {
+        ObjectMapper mapper = new ObjectMapper();
+        String s = mapper.writeValueAsString(data);
+
+        if (s.length() > 250) {
+            s = s.substring(0, 250) + " ...";
+        }
+
+        return s;
+    }
+
     public GenericData.Record fromMap(Schema schema, Map<String, Object> data) throws IllegalRowConvertion {
         GenericData.Record record = new GenericData.Record(schema);
 
         for (Schema.Field field : schema.getFields()) {
             try {
-                record.put(field.name(), convert(field.schema(), data.get(field.name())));
-            } catch (IllegalCellConversion e) {
+                if (schema.getField(field.name()).hasDefaultValue()) {
+                    Object defaultVal = schema.getField(field.name()).defaultVal();
+                    record.put(field.name(), convert(field.schema(), data.getOrDefault(field.name(), defaultVal)));
+                } else if (!schema.getField(field.name()).hasDefaultValue() && missingDefaultIsNull) {
+                    record.put(field.name(), convert(field.schema(), data.getOrDefault(field.name(), null)));
+                } else if (!data.containsKey(field.name())) {
+                    throw new NullPointerException("key " + field.name() + "not found in " + data);
+                } else {
+                    record.put(field.name(), convert(field.schema(), data.get(field.name())));
+                }
+            } catch (IllegalCellConversion | NullPointerException e) {
                 throw new IllegalRowConvertion(data, e, field);
             }
         }
@@ -157,36 +178,29 @@ public class AvroConverter {
         return StringUtils.replaceOnce(value, String.valueOf(this.decimalSeparator), ".");
     }
 
-    @SuppressWarnings("UnpredictableBigDecimalConstructorCall")
     private BigDecimal logicalDecimal(Schema schema, Object data) {
         int scale = ((LogicalTypes.Decimal) schema.getLogicalType()).getScale();
         int precision = ((LogicalTypes.Decimal) schema.getLogicalType()).getPrecision();
-        double multiply = Math.pow(10D, precision - scale * 1D);
 
-        BigDecimal value;
-
-        if (data instanceof String) {
-            value = new BigDecimal(convertDecimalSeparator(((String) data)));
-        } else if (data instanceof Long) {
-            value = BigDecimal.valueOf((long) ((long) data * multiply), scale);
-        } else if (data instanceof Integer) {
-            value = BigDecimal.valueOf((int) ((int) data * multiply), scale);
-        } else if (data instanceof Double) {
-            value = new BigDecimal((double) data, new MathContext(precision));
-        } else if (data instanceof Float) {
-            value = new BigDecimal((float) data, new MathContext(precision));
-        } else {
-            value = (BigDecimal) data;
+        BigDecimal value = new BigDecimal(
+            data instanceof String ?
+                convertDecimalSeparator((String) data)
+                : String.valueOf(data));
+        //noinspection BigDecimalMethodWithoutRoundingCalled because we want it to throw exception if there is an error
+        BigDecimal scaledValue = value.setScale(scale);
+        if (scaledValue.unscaledValue().toString().length() > precision) {
+            throw new ArithmeticException(String.format("Value %s cannot be expressed with a precision of %d",
+                scaledValue,
+                precision));
         }
-
-        value = value.setScale(scale, RoundingMode.HALF_EVEN);
-
-        return value;
+        return scaledValue.multiply(BigDecimal.ONE, new MathContext(precision)); // else, precision is "0"
     }
 
     private UUID logicalUuid(Object data) {
         if (data instanceof String) {
             return UUID.fromString((String) data);
+        } else if (data == null) {
+            throw new NullPointerException();
         } else {
             return (UUID) data;
         }
@@ -195,6 +209,8 @@ public class AvroConverter {
     private LocalDate logicalDate(Object data) {
         if (data instanceof String) {
             return LocalDate.parse((String) data, DateTimeFormatter.ofPattern(this.dateFormat));
+        } else if (data == null) {
+            throw new NullPointerException();
         } else {
             return (LocalDate) data;
         }
@@ -203,6 +219,8 @@ public class AvroConverter {
     private LocalTime logicalTimeMillis(Object data) {
         if (data instanceof String) {
             return LocalTime.parse((String) data, DateTimeFormatter.ofPattern(this.timeFormat));
+        } else if (data == null) {
+            throw new NullPointerException();
         } else {
             return (LocalTime) data;
         }
@@ -211,6 +229,8 @@ public class AvroConverter {
     private LocalTime logicalTimeMicros(Object data) {
         if (data instanceof String) {
             return LocalTime.parse((String) data, DateTimeFormatter.ofPattern(this.timeFormat));
+        } else if (data == null) {
+            throw new NullPointerException();
         } else {
             return (LocalTime) data;
         }
@@ -219,6 +239,8 @@ public class AvroConverter {
     private Instant logicalTimestampMillis(Object data) {
         if (data instanceof String) {
             return LocalDateTime.parse((String) data, DateTimeFormatter.ofPattern(this.datetimeFormat)).toInstant(ZoneOffset.UTC);
+        } else if (data == null) {
+            throw new NullPointerException();
         } else {
             return (Instant) data;
         }
@@ -227,6 +249,8 @@ public class AvroConverter {
     private Instant logicalTimestampMicros(Object data) {
         if (data instanceof String) {
             return LocalDateTime.parse((String) data, DateTimeFormatter.ofPattern(this.datetimeFormat)).toInstant(ZoneOffset.UTC);
+        } else if (data == null) {
+            throw new NullPointerException();
         } else {
             return (Instant) data;
         }
@@ -366,6 +390,10 @@ public class AvroConverter {
     }
 
     public String primitiveString(Object data) {
+        if (data == null) {
+            throw new NullPointerException("Invalid object with null data");
+        }
+
         return String.valueOf(data);
     }
 
@@ -375,17 +403,6 @@ public class AvroConverter {
 
     private boolean contains(List<String> list, String data) {
         return list.stream().anyMatch(s -> s.equalsIgnoreCase(data));
-    }
-
-    private static String trimExceptionMessage(Object data) throws JsonProcessingException {
-        ObjectMapper mapper = new ObjectMapper();
-        String s = mapper.writeValueAsString(data);
-
-        if (s.length() > 250) {
-            s = s.substring(0, 250) + " ...";
-        }
-
-        return s;
     }
 
     @Getter

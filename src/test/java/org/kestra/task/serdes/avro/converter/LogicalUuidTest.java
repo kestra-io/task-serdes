@@ -27,6 +27,8 @@ public class LogicalUuidTest {
 
     static Stream<Arguments> failedSource() {
         return Stream.of(
+            Arguments.of((Object) null),
+            Arguments.of(1),
             Arguments.of("123e4567"),
             Arguments.of("123e4567e89b12d3a456556642440000")
         );

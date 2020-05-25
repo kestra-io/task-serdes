@@ -2,12 +2,12 @@ package org.kestra.task.serdes.avro.converter;
 
 import org.apache.avro.LogicalTypes;
 import org.apache.avro.Schema;
-import org.kestra.task.serdes.avro.AvroConverterTest;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.kestra.task.serdes.avro.AvroConverterTest;
 
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
@@ -36,6 +36,8 @@ class LogicalDateTest {
 
     Stream<Arguments> failedSource() {
         return Stream.of(
+            Arguments.of((Object) null),
+            Arguments.of("jacky"),
             Arguments.of("12-26-2019"),
             Arguments.of("2019-12+0100")
         );

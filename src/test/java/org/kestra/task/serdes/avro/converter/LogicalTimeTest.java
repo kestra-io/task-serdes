@@ -31,6 +31,9 @@ public class LogicalTimeTest {
 
     static Stream<Arguments> failedSource() {
         return Stream.of(
+            Arguments.of((Object)null),
+            Arguments.of(1235),
+            Arguments.of(12.35),
             Arguments.of("12:26:2019"),
             Arguments.of("12+0100")
         );
